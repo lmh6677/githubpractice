@@ -1,0 +1,735 @@
+---
+title: "STAT 184 Reproducible Data Analysis"
+author: "Logan Howard"
+date: "April 13, 2026"
+date-modified: now
+format: 
+  pdf: 
+    toc: false
+    number-sections: true
+    number-depth: 5
+    fig-align: center
+    cap-location: top
+    geometry: 
+      - top=1in
+      - left=1in
+      - right=1in
+      - bottom=1in
+    colorlinks: true
+execute: 
+  echo: false
+  warning: false
+---
+
+# Busiest Airport Analysis
+
+Across both the table and the line graph, a clear pattern emerges, showing all six airports experienced substantial growth in passenger traffic from 2020 to 2025. They did so at very different speeds and with different levels of volatility. The table makes the magnitude of these differences explicit—ATL, DXB, and HND consistently report the highest passenger counts, and their year‑over‑year changes show steadiness. In contrast, DFW and FRA grow more moderately, reflecting a slower but stable return of travel. PKX stands out in the table for its sharp fluctuations, including a noticeable dip in 2022 followed by rapid increases in 2023 and 2024. These numerical patterns set the stage for what becomes visually intuitive in the line graph.
+
+The graph reinforces these contrasts by showing how the airports relate to one another over time. ATL’s line remains well above the others, highlighting its role as the world’s busiest airport and its strong post‑pandemic rebound. DXB and HND track closely behind, with smooth upward trajectories that signal consistent growth in major global hubs. DFW and FRA form a middle tier with gentler slopes, while PKX’s line dips and then rises sharply, visually emphasizing its volatility and late‑stage expansion. The graph emphasizes the global aviation system recovered unevenly, with established hubs rebounding quickly and newer or more regionally constrained airports experiencing more dramatic swings. The combination of visuals helps reveal not just the recovery itself, but the different pathways each airport took to get there.
+
+```{r}
+#| echo: false
+library(knitr)
+library(tidyverse)
+
+airports <- data.frame(
+  airport = c("ATL", "DXB", "PKX", "DFW", "FRA", "HND"),
+  passengers_2025 = c(106.302208, 95.200000, 53.618949, 85.660127, 63.189666, 91.430000),
+  passengers_2024 = c(108.067766, 92.331506, 49.441029, 87.817864, 61.564957, 85.900167),
+  passengers_2023 = c(104.653451, 86.994365, 39.400000, 81.755538, 59.355389, 78.719302),
+  passengers_2022 = c(93.6996300, 66.069981, 10.277623, 73.362946, 48.918482, 50.290705),
+  passengers_2021 = c(75.7047600, 29.110609, 25.051012, 62.465756, 24.812849, 25.876429),
+  passengers_2020 = c(42.9186850, 25.836771, 16.091449, 39.364990, 18.768601, 31.055210),
+  
+  percent_change_2025 = c(-1.6,3.1,8.4,-2.5,2.6,6.7),
+  percent_change_2024 = c(3.3, 6.1,25.5,7.4,3.7,9.1),
+  percent_change_2023 = c(11.7,31.7,283.5,11.4,21.3,55.1),
+  percent_change_2022 = c(23.8,127,-59,17.5,97.2,92.5),
+  percent_change_2021 = c(76.4,12.7,35.7,58.7,32.2,-15.4),
+  percent_change_2020 = c(-61.2,-70.1,413.3,-47.6,-73.4,-32.7)
+  
+)
+
+
+airports_long <- airports %>%
+  pivot_longer(
+    cols = starts_with("passengers_"),
+    names_to = "year",
+    values_to = "passengers"
+  ) %>%
+  mutate(
+    year = as.numeric(gsub("passengers_", "", year))
+  )
+
+library(tidyverse)
+library(knitr)
+
+# Create a wide comparison table of passengers by year
+airport_table <- airports_long %>%
+  select(airport, year, passengers) %>%
+  pivot_wider(
+    names_from = year,
+    values_from = passengers,
+    names_prefix = "year_"
+  ) %>%
+  arrange(airport)
+
+kable(
+  airport_table,
+  caption = "Passenger Traffic for Six Major Airports (2020–2025)"
+)
+
+```
+
+```{r}
+#| echo: false
+
+ggplot(airports_long, aes(x = year, y = passengers, color = airport)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Passenger Traffic (2020–2025)",
+    x = "Year",
+    y = "Passengers (millions)",
+    color = "Airport"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+# Monte Carlo Analysis
+
+Across the four panels of my small multiple, you can see the Monte Carlo estimates becoming more stable as the number of sampled points increases, moving from inconsistent values at low resolutions toward a clear convergence near **0.77** when the sample size reaches 10,000. Because the Weibull PDF with shape 1.5 and scale 1 integrates to **1 over** \[0,∞), the true value of the integral on \[0,4\] should be slightly below 1; the consistent clustering of high‑resolution estimates around 0.77 supports this reasoning. The densest plots show the green “on/below” points filling the region under the curve in a way that matches the shape of the Weibull density, and the fact that the estimates change very little between 1,000 and 10,000 points helps a viewer see that the simulation has effectively stabilized. Together, these patterns make it clear that the best estimate for the integral over \[0,4\] is approximately **0.77**, and the small multiple provides the visual evidence needed to justify that conclusion.
+
+```{r}
+#| echo: false
+
+
+generate_mc_points <- function(n, x_min, x_max, y_min, y_max) {
+  tibble(
+    x = runif(n, x_min, x_max),
+    y = runif(n, y_min, y_max)
+  )
+}
+
+
+  wrangle_weibull <- function(df) {
+  df %>%
+    mutate(
+      f_val = dweibull(x, shape = 1.5, scale = 1),
+      below = y <= f_val
+    )
+}
+
+
+estimate_weibull <- function(df, x_min = 0, x_max = 4) {
+  
+  # y-bounds based on Weibull PDF
+  y_min <- 0
+  y_max <- max(dweibull(seq(x_min, x_max, length.out = 1000),
+                        shape = 1.5, scale = 1))
+  
+  rect_area <- (x_max - x_min) * (y_max - y_min)
+  
+  p <- mean(df$below)
+  p * rect_area
+}
+
+
+plot_weibull_mc <- function(df, n, x_min = 0, x_max = 4) {
+  
+  est <- estimate_weibull(df, x_min, x_max)
+  
+  ggplot(df, aes(x = x, y = y, color = below)) +
+    geom_point(alpha = 0.7, size = 1.5) +
+    stat_function(
+      fun = dweibull,
+      args = list(shape = 1.5, scale = 1),
+      xlim = c(x_min, x_max),
+      color = "blue",
+      size = 1.2
+    ) +
+    scale_color_manual(
+      values = c("TRUE" = "green3", "FALSE" = "red3"),
+      labels = c("TRUE" = "On/Below Curve", "FALSE" = "Above Curve"),
+      name = "Point Type"
+    ) +
+    labs(
+      title = paste("Monte Carlo Integration", n),
+      subtitle = paste("Estimated Integral:", round(est, 5)),
+      x = "x",
+      y = "y"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(size = 12),      # smaller title
+      plot.subtitle = element_text(size = 10)    # smaller subtitle
+)
+
+}
+
+library(patchwork)
+
+
+df10     <- generate_mc_points(10,     0, 4, 0, 1)
+df100    <- generate_mc_points(100,    0, 4, 0, 1)
+df1000 <- generate_mc_points(1000, 0, 4, 0, 1)
+df10000  <- generate_mc_points(10000,  0, 4, 0, 1)
+
+df10     <- wrangle_weibull(df10)
+df100    <- wrangle_weibull(df100)
+df1000   <- wrangle_weibull(df1000)
+df10000  <- wrangle_weibull(df10000)
+
+plot10     <- plot_weibull_mc(df10,     10)
+plot100    <- plot_weibull_mc(df100,    100)
+plot1000   <- plot_weibull_mc(df1000,   1000)
+plot10000  <- plot_weibull_mc(df10000,  10000)
+
+plot10 + plot100 + plot1000 + plot10000
+
+```
+
+# Planning and Prompting GenAI Tools
+
+Based on the calcium.csv file, I have made a plan detailing the goals, needs, and steps to make my code. I will then ask copilot, based off of my plans and the csv file, to create the code for me.
+
+## Goals:
+
+-   Tidy the calcium.csv data set
+
+    -   Identifies each women, her treatment group, and calcium measurement
+
+-   Create a plot to see the calcium level changes over time between the two treatment groups
+
+### Nouns
+
+-   Calcium.csv
+
+    -   Null treatment group columns:
+
+        -   initial_null, year1_null, year2_null, year3_null
+
+    -   Diet/exercise treatment group columns:
+
+        -   initial_treat, year1_treat, year2_treat, year3_treat
+
+    -   Participant identifier (id)
+
+    -   Treatment group label (group)
+
+    -   Time variable (time)
+
+    -   Calcium measurement (calcium)
+
+    -   Tidy long-format data set
+
+    -   ggplot visualization object
+
+    -   Axes: time (x), calcium level (y)
+
+    -   Aesthetic mappings: color = treatment group, group = participant ID
+
+    -   Summary trend
+
+### Verbs
+
+-   import
+-   inspect
+-   pivot / reshape
+-   rename
+-   mutate
+-   create participant IDs
+-   assign treatment groups
+-   tidy the data set
+-   visualize
+-   compare
+-   interpret patterns
+
+## Steps to Create the code
+
+#### **Step 1 — Import and Inspect the Raw Data** Load tidyverse to access readr, dplyr, and tidyr.
+
+1.  Import calcium.csv using read_csv().
+
+2.  Use glimpse() and colnames() to confirm:
+
+    -   The first four columns correspond to the **null** group.
+
+    -   The next four correspond to the **diet/exercise** group.
+
+3.  Check for missing values or irregularities that might affect reshaping.
+
+#### **Step 2 — Add Participant Identifiers (Sub‑Goal: Ensure Each Woman Is Trackable)**
+
+5.  Create a new variable id = 1:31 to uniquely identify each woman.
+
+6.  Bind this ID to the data set so each row corresponds to one participant.
+
+#### **Step 3 — Reshape the Data Into Tidy Format**
+
+7.  Pivot the eight measurement columns into long format using pivot_longer().
+
+8.  Use names_to = "source" and values_to = "calcium" to capture the original column names.
+
+9.  Extract two pieces of information from each original column name:
+
+    -   **time** (Initial, Year1, Year2, Year3)
+
+    -   **group** (Null vs. Treat)
+
+10. Use separate() or case_when() to create clean time and group variables.
+
+11. Convert time into an ordered factor so the plot displays chronologically.
+
+#### **Step 4 — Finalize and Validate the Tidy Dataset**
+
+12. Select and reorder columns to: id, group, time, calcium.
+
+13. Use count(id, group) to confirm each woman appears in exactly one treatment group.
+
+14. Use count(time) to confirm four time points are represented.
+
+#### **Step 5 — Create a Visualization to Explore Group Differences**
+
+15. Initialize a ggplot with:
+
+    -   x = time
+
+    -   y = calcium
+
+    -   color = group
+
+16. Add geom_line(aes(group = id), alpha = 0.3) to show individual trajectories.
+
+17. Add a group‑level trend layer:
+
+    -   stat_summary(fun = mean, geom = "line", size = 1.2) **or**
+
+    -   geom_smooth(se = FALSE, method = "loess")
+
+18. Label the plot with a clear title and axis labels.
+
+19. Apply theme_minimal() for clarity.
+
+#### **Step 6 — Interpret the Visualization**
+
+20. Describe whether calcium levels decline, stabilize, or improve over time.
+
+21. Compare the null group vs. diet/exercise group trajectories.
+
+22. Identify whether the intervention appears to slow calcium loss.
+
+23. Note any outliers or unusual individual patterns that may warrant further analysis.
+
+## Generic Prompt Response
+
+![Figure 1](images/CopilotPlot.png)
+
+Prompt: Create a data visualization for these data. Calcium.csv
+
+I’ve created a clear data visualization based on your **calcium.csv** file.
+
+**📊 Visualization Created: Boxplot of Calcium Measurements**
+
+The figure below is a **box-and-whisker plot** showing the distribution of calcium values for each measurement series (y0, y1, y2, y3, repeated across groups).
+
+**Why a boxplot?**
+
+A boxplot is well suited for this data set because it:
+
+-   Shows **central tendency** (median)
+
+-   Displays **spread and variability** (quartiles and range)
+
+-   Highlights **outliers**
+
+-   Allows easy **comparison across multiple groups**
+
+**What you can see**
+
+-   Differences in median calcium levels across measurement series
+
+-   Variation within each series
+
+-   Potential outliers or unusually low/high measurements
+
+**The visualization**
+
+If you’d like, I can also:
+
+-   Create **line plots** (e.g., trends across rows)
+
+-   Aggregate repeated variables (y0–y3) and visualize **means ± SD**
+
+-   Produce **publication-ready figures** (journal style, grayscale, higher resolution)
+
+-   Export the visualization to **PNG, PDF, or SVG**
+
+-   Just tell me how you plan to use it (exploratory analysis, presentation, or publication).
+
+Prompt: What is your current version information?
+
+Here’s my current version information:
+
+-   **Product**: **Microsoft 365 Copilot (M365 Copilot)**
+
+-   **Underlying model**: **GPT‑5 chat model**
+
+-   **Knowledge cutoff**: **2025**
+
+-   **Current date/time (for this response)**: **March 31, 2026 (GMT‑04:00)**
+
+-   Practically speaking, that means:
+
+<!-- -->
+
+-   I can reason, analyze data, write code, and create visualizations.
+
+-   I can also look up **up‑to‑date information** when needed using web tools.
+
+-   My built‑in training knowledge goes up through 2025, with newer facts retrieved on demand.
+
+-   If you’re asking because you need to cite the tool in a methods section or documentation, I can help you phrase that appropriately.
+
+(This chat took place on Tuesday, March 31^st^, 2026.)
+
+## **Comparing the GenAI response and Plan-Informed response**
+
+When I compare the three artifacts I produced — the plan‑informed genAI response, the generic‑prompt genAI response, and my own work — the differences reveal how strongly the situation and the case shape what a genAI tool is able to do. The contrast between them shows that the quality of the output is not simply a matter of the model’s capabilities, but of how clearly I frame the problem and how well I communicate the structure of the data.
+
+### **1. The plan‑informed genAI response**
+
+The plan‑informed response produced the most appropriate and context‑aware visualization: a longitudinal spaghetti plot showing individual trajectories and group‑level trends across four years. This happened because the plan explicitly articulated the case:
+
+-   that each row represented a woman,
+
+-   that the first four columns belonged to the null group and the next four to the diet/exercise group,
+
+-   that the columns represented repeated measurements over time,
+
+-   and that the research question concerned change over time and differences between treatment groups.
+
+By giving the model a structured plan with goals, needs, and steps, I essentially taught it how to “see” the situation the way a human analyst would. The resulting plot respected the longitudinal design, preserved within‑person variation, and highlighted the treatment effect. The model’s reasoning aligned with the scientific logic of the study because the plan made that logic explicit.
+
+### **2. The generic‑prompt genAI response**
+
+In contrast, the generic prompt — “Create a data visualization for these data” — produced a **boxplot** comparing the eight columns as if they were unrelated variables. This visualization was not wrong in a technical sense, but it was wrong for the *situation*. Without a plan, the model had no way to infer the underlying structure of the dataset: that the columns were paired by group, that time was encoded implicitly, or that the rows represented repeated measures from the same individuals. The model treated the dataset as a flat table of independent variables, which is a reasonable default when no context is provided.
+
+This artifact demonstrates a key lesson: genAI tools do not automatically detect the *case* behind the data. They do not infer study design, repeated measures, or grouping structure unless the user tells them. When the prompt is generic, the output is generic.
+
+### **3. Lessons about working with genAI tools**
+
+Across these three artifacts, the most important lesson is that **genAI tools do not understand the situation unless I articulate it**. The model cannot infer the study design, the meaning of the variables, or the analytical goals unless I make them explicit. When I provide a detailed plan, the model produces work that is aligned with the scientific logic of the problem. When I do not, it defaults to generic statistical conventions.
+
+This activity also showed me that **the quality of the output is directly proportional to the quality of the structure I provide**. The plan acted as a scaffold that guided the model toward the correct interpretation of the data. Without that scaffold, the model produced a visualization that was technically fine but conceptually misaligned.
+
+Finally, comparing the three artifacts made it clear that **genAI is not a replacement for understanding the data**. Instead, it is a tool that amplifies whatever understanding I bring to it. If I bring clarity, the model produces clarity. If I bring ambiguity, the model produces ambiguity. The responsibility for framing the case and the situation remains with me.
+
+## Reflection
+
+This class has provided me with the necessary foundation for R coding that will be essential for my future courses and possibly my future jobs. I am now able to translate requests into a format of how to proceed forward. The repetitiveness of making my goal, needs, and steps for my coding, which at first at thought was not worth my time, I now realize have much value. It allows me to think through what I need to get done and the best way to get to my finished code.
+
+For the coding itself, much of it has become easy for me to understand now. The use of data frames to create tables that i used ofr my airplane project, tidying data through the use of pivoting long or wide, creating functions, and the many uses of ggplot.
+
+{{< pagebreak >}}
+
+Gen AI Appendix
+
+I used Microsoft Copilot for my plan-informed response on April 14th, 2026. The following are the prompts I used and the responses:
+
+#### **Here is the calcium.csv file. Based off the plans I made, can you make the r code**
+
+Here you go, Logan — a clean, assignment‑ready R script that follows **exactly** the plan we built and uses the **actual structure** of your uploaded `calcium.csv` file.
+
+Your file has **8 columns**:
+
+-   First 4 columns = **null group** (`y0, y1, y2, y3`)
+
+-   Next 4 columns = **diet/exercise group** (`y0, y1, y2, y3` again)
+
+So the code below explicitly renames them, tidies them, assigns treatment groups, and produces the visualization.
+
+Everything is polished, reproducible, and ready for your Quarto document.
+
+# ✅ **R Code for Tidying and Plotting the Calcium Data**
+
+```         
+library(tidyverse)  # ------------------------------------------------------------ # 1. Import and inspect the data # ------------------------------------------------------------  calcium_raw <- read_csv("calcium.csv",                         col_names = c("null_y0", "null_y1", "null_y2", "null_y3",                                       "treat_y0", "treat_y1", "treat_y2", "treat_y3"))  glimpse(calcium_raw)  # ------------------------------------------------------------ # 2. Add participant identifiers # ------------------------------------------------------------  calcium_raw <- calcium_raw %>%   mutate(id = 1:n())  # ------------------------------------------------------------ # 3. Reshape into tidy long format # ------------------------------------------------------------  calcium_long <- calcium_raw %>%   pivot_longer(     cols = starts_with("null_") | starts_with("treat_"),     names_to = "source",     values_to = "calcium"   ) %>%   # Extract treatment group and time from column names   mutate(     group = case_when(       str_detect(source, "null") ~ "Null",       str_detect(source, "treat") ~ "Diet/Exercise"     ),     time = case_when(       str_detect(source, "y0") ~ "Initial",       str_detect(source, "y1") ~ "Year 1",       str_detect(source, "y2") ~ "Year 2",       str_detect(source, "y3") ~ "Year 3"     )   ) %>%   select(id, group, time, calcium) %>%   mutate(     time = factor(time, levels = c("Initial", "Year 1", "Year 2", "Year 3"))   )  # Check structure glimpse(calcium_long)  # ------------------------------------------------------------ # 4. Visualization of calcium levels over time by treatment group # ------------------------------------------------------------  ggplot(calcium_long, aes(x = time, y = calcium, color = group)) +   geom_line(aes(group = id), alpha = 0.3) +   stat_summary(fun = mean, geom = "line", size = 1.4) +   labs(     title = "Ulnar Calcium Levels Over Four Years",     x = "Time",     y = "Calcium Measurement",     color = "Treatment Group"   ) +   theme_minimal(base_size = 14) 
+```
+
+# ⭐ Why this code is correct for *your* dataset
+
+Here are the two key lines from your CSV that justify the structure:
+
+> “the null treatment group take up the first four columns and the diet/exercise group make up the second four columns.” “you’ll find the measurements (Initial, Year 1, Year 2, Year 3) for each woman.”
+
+Your file matches this exactly:
+
+Code
+
+```         
+y0,y1,y2,y3,y0,y1,y2,y3 87.3,86.9,86.7,75.5,83.8,85.5,86.2,81.2 
+```
+
+So the renaming step is essential:
+
+```         
+col_names = c("null_y0", "null_y1", "null_y2", "null_y3",               "treat_y0", "treat_y1", "treat_y2", "treat_y3") 
+```
+
+This ensures the pivoting and group assignment work flawlessly.
+
+If you want, I can also write:
+
+-   the **narrative text** describing your tidying process
+
+-   the **interpretation paragraph** for your plot
+
+-   the **Quarto code appendix** version
+
+-   or a **table** summarizing group means over time
+
+Just tell me what piece you want next.
+
+{{< pagebreak >}}
+
+\
+Code Appendix
+
+```{r}
+#| label: Busiest Airport Analysis
+#| ref-label: !expr knitr::all_labels()
+#| echo: true
+#| eval: false
+airports <- data.frame(
+  airport = c("ATL", "DXB", "PKX", "DFW", "FRA", "HND"),
+  passengers_2025 = c(106.302208, 95.200000, 53.618949, 85.660127, 63.189666, 91.430000),
+  passengers_2024 = c(108.067766, 92.331506, 49.441029, 87.817864, 61.564957, 85.900167),
+  passengers_2023 = c(104.653451, 86.994365, 39.400000, 81.755538, 59.355389, 78.719302),
+  passengers_2022 = c(93.6996300, 66.069981, 10.277623, 73.362946, 48.918482, 50.290705),
+  passengers_2021 = c(75.7047600, 29.110609, 25.051012, 62.465756, 24.812849, 25.876429),
+  passengers_2020 = c(42.9186850, 25.836771, 16.091449, 39.364990, 18.768601, 31.055210),
+  
+  percent_change_2025 = c(-1.6,3.1,8.4,-2.5,2.6,6.7),
+  percent_change_2024 = c(3.3, 6.1,25.5,7.4,3.7,9.1),
+  percent_change_2023 = c(11.7,31.7,283.5,11.4,21.3,55.1),
+  percent_change_2022 = c(23.8,127,-59,17.5,97.2,92.5),
+  percent_change_2021 = c(76.4,12.7,35.7,58.7,32.2,-15.4),
+  percent_change_2020 = c(-61.2,-70.1,413.3,-47.6,-73.4,-32.7)
+  
+)
+
+
+airports_long <- airports %>%
+  pivot_longer(
+    cols = starts_with("passengers_"),
+    names_to = "year",
+    values_to = "passengers"
+  ) %>%
+  mutate(
+    year = as.numeric(gsub("passengers_", "", year))
+  )
+
+library(tidyverse)
+library(knitr)
+
+# Create a wide comparison table of passengers by year
+airport_table <- airports_long %>%
+  select(airport, year, passengers) %>%
+  pivot_wider(
+    names_from = year,
+    values_from = passengers,
+    names_prefix = "year_"
+  ) %>%
+  arrange(airport)
+
+# Display the table
+kable(
+  airport_table,
+  caption = "Passenger Traffic for Six Major Airports (2020–2025)"
+)
+
+ggplot(airports_long, aes(x = year, y = passengers, color = airport)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Passenger Traffic (2020–2025)",
+    x = "Year",
+    y = "Passengers (millions)",
+    color = "Airport"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+{{< pagebreak >}}
+
+\
+Code Appendix
+
+```{r}
+#| label: Monte Carlo
+#| ref-label: !expr knitr::all_labels()
+#| echo: true
+#| eval: false
+
+generate_mc_points <- function(n, x_min, x_max, y_min, y_max) {
+  tibble(
+    x = runif(n, x_min, x_max),
+    y = runif(n, y_min, y_max)
+  )
+}
+
+
+  wrangle_weibull <- function(df) {
+  df %>%
+    mutate(
+      f_val = dweibull(x, shape = 1.5, scale = 1),
+      below = y <= f_val
+    )
+}
+
+
+estimate_weibull <- function(df, x_min = 0, x_max = 4) {
+  
+  # y-bounds based on Weibull PDF
+  y_min <- 0
+  y_max <- max(dweibull(seq(x_min, x_max, length.out = 1000),
+                        shape = 1.5, scale = 1))
+  
+  rect_area <- (x_max - x_min) * (y_max - y_min)
+  
+  p <- mean(df$below)
+  p * rect_area
+}
+
+
+plot_weibull_mc <- function(df, n, x_min = 0, x_max = 4) {
+  
+  est <- estimate_weibull(df, x_min, x_max)
+  
+  ggplot(df, aes(x = x, y = y, color = below)) +
+    geom_point(alpha = 0.7, size = 1.5) +
+    stat_function(
+      fun = dweibull,
+      args = list(shape = 1.5, scale = 1),
+      xlim = c(x_min, x_max),
+      color = "blue",
+      size = 1.2
+    ) +
+    scale_color_manual(
+      values = c("TRUE" = "green3", "FALSE" = "red3"),
+      labels = c("TRUE" = "On/Below Curve", "FALSE" = "Above Curve"),
+      name = "Point Type"
+    ) +
+    labs(
+      title = paste("Monte Carlo Integration", n),
+      subtitle = paste("Estimated Integral:", round(est, 5)),
+      x = "x",
+      y = "y"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+    plot.title = element_text(size = 12),      
+    plot.subtitle = element_text(size = 10)    
+)
+
+}
+
+library(patchwork)
+
+
+df10     <- generate_mc_points(10,     0, 4, 0, 1)
+df100    <- generate_mc_points(100,    0, 4, 0, 1)
+df1000 <- generate_mc_points(1000, 0, 4, 0, 1)
+df10000  <- generate_mc_points(10000,  0, 4, 0, 1)
+
+df10     <- wrangle_weibull(df10)
+df100    <- wrangle_weibull(df100)
+df1000   <- wrangle_weibull(df1000)
+df10000  <- wrangle_weibull(df10000)
+
+plot10     <- plot_weibull_mc(df10,     10)
+plot100    <- plot_weibull_mc(df100,    100)
+plot1000   <- plot_weibull_mc(df1000,   1000)
+plot10000  <- plot_weibull_mc(df10000,  10000)
+
+plot10 + plot100 + plot1000 + plot10000
+
+```
+
+{{< pagebreak >}}
+
+\
+Code Appendix
+
+```{r}
+#| label: Calcium Level Comparisons
+#| ref-label: !expr knitr::all_labels()
+#| echo: true
+#| eval: false
+library(tidyverse)
+
+# ------------------------------------------------------------
+# 1. Import and inspect the data
+# ------------------------------------------------------------
+
+calcium_raw <- read_csv("calcium.csv",
+                        col_names = c("null_y0", "null_y1", "null_y2", "null_y3",
+                                      "treat_y0", "treat_y1", "treat_y2", "treat_y3"))
+
+glimpse(calcium_raw)
+
+# ------------------------------------------------------------
+# 2. Add participant identifiers
+# ------------------------------------------------------------
+
+calcium_raw <- calcium_raw %>%
+  mutate(id = 1:n())
+
+# ------------------------------------------------------------
+# 3. Reshape into tidy long format
+# ------------------------------------------------------------
+
+calcium_long <- calcium_raw %>%
+  pivot_longer(
+    cols = starts_with("null_") | starts_with("treat_"),
+    names_to = "source",
+    values_to = "calcium"
+  ) %>%
+  # Extract treatment group and time from column names
+  mutate(
+    group = case_when(
+      str_detect(source, "null") ~ "Null",
+      str_detect(source, "treat") ~ "Diet/Exercise"
+    ),
+    time = case_when(
+      str_detect(source, "y0") ~ "Initial",
+      str_detect(source, "y1") ~ "Year 1",
+      str_detect(source, "y2") ~ "Year 2",
+      str_detect(source, "y3") ~ "Year 3"
+    )
+  ) %>%
+  select(id, group, time, calcium) %>%
+  mutate(
+    time = factor(time, levels = c("Initial", "Year 1", "Year 2", "Year 3"))
+  )
+
+# Check structure
+glimpse(calcium_long)
+
+# ------------------------------------------------------------
+# 4. Visualization of calcium levels over time by treatment group
+# ------------------------------------------------------------
+
+ggplot(calcium_long, aes(x = time, y = calcium, color = group)) +
+  geom_line(aes(group = id), alpha = 0.3) +
+  stat_summary(fun = mean, geom = "line", size = 1.4) +
+  labs(
+    title = "Ulnar Calcium Levels Over Four Years",
+    x = "Time",
+    y = "Calcium Measurement",
+    color = "Treatment Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
